@@ -1,0 +1,39 @@
+steps:
+  # 1. Build Container Image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/syncgm:$COMMIT_SHA'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/syncgm:latest'
+      - '.'
+
+  # 2. Push Image to Google Artifact Registry / Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/syncgm:$COMMIT_SHA']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/syncgm:latest']
+
+  # 3. Deploy to Google Cloud Run with Cloud SQL Integration
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'syncgm-service'
+      - '--image=gcr.io/$PROJECT_ID/syncgm:$COMMIT_SHA'
+      - '--region=us-central1'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+      - '--set-secrets=DATABASE_URL=syncgm-db-url:latest,SYNCGM_ENCRYPTION_KEY=syncgm-enc-key:latest,SYNCGM_SCHEDULER_SECRET=syncgm-scheduler-secret:latest'
+      - '--add-cloudsql-instances=$PROJECT_ID:us-central1:syncgm-postgres'
+      - '--min-instances=0'
+      - '--max-instances=10'
+      - '--memory=512Mi'
+      - '--cpu=1'
+
+images:
+  - 'gcr.io/$PROJECT_ID/syncgm:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/syncgm:latest'

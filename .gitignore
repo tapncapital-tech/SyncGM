@@ -1,0 +1,37 @@
+# Environment variables & secrets
+.env
+.env*.local
+*.pem
+*.key
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Databases & local storage
+*.db
+*.sqlite
+*.sqlite3
+syncgm_dev.db
+syncgm.db
+
+# Temp & scratch files
+.tmp/
+*.log
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Local notes & guides
+*.rtf
+*.rtfd/

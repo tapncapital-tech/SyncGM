@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: syncgm_app
+    ports:
+      - "8080:8080"
+    environment:
+      - DATABASE_URL=postgresql://syncgm_user:syncgm_pass@db:5432/syncgm_db
+      - SYNCGM_ENCRYPTION_KEY=syncgm-local-development-key-32b!!
+      - SYNCGM_SCHEDULER_SECRET=dev-scheduler-secret
+      - ENVIRONMENT=development
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    container_name: syncgm_postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=syncgm_user
+      - POSTGRES_PASSWORD=syncgm_pass
+      - POSTGRES_DB=syncgm_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U syncgm_user -d syncgm_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
