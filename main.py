@@ -797,6 +797,7 @@ def index():
           <div id="schedule-badge" class="schedule-status-badge">OFF</div>
         </div>
         <div class="pills-group">
+          <button id="pill-hourly" class="pill-btn" onclick="selectFrequency('hourly')">Hourly</button>
           <button id="pill-daily" class="pill-btn" onclick="selectFrequency('daily')">Daily</button>
           <button id="pill-weekly" class="pill-btn" onclick="selectFrequency('weekly')">Weekly</button>
           <button id="pill-monthly" class="pill-btn" onclick="selectFrequency('monthly')">Monthly</button>
@@ -931,6 +932,10 @@ def index():
         badge.innerText = 'OFF';
         return;
       }
+      if (currentFrequency === 'hourly') {
+        badge.innerText = 'HOURLY (EVERY HOUR)';
+        return;
+      }
       if (currentFrequency === 'daily') {
         badge.innerText = `DAILY @ ${time12} ${tz} (LOCAL)`;
       } else if (currentFrequency === 'weekly') {
@@ -964,6 +969,15 @@ def index():
             cron_expr: 'disabled'
           });
         }
+      } else if (freq === 'hourly') {
+        detailsRow.style.display = 'none';
+        if (saveIfDisabled) {
+          await sendAction('set_schedule', {
+            frequency: 'hourly',
+            enabled: true,
+            cron_expr: '0 * * * *'
+          });
+        }
       } else {
         detailsRow.style.display = 'flex';
         dayGroup.style.display = (freq === 'weekly') ? 'flex' : 'none';
@@ -977,6 +991,7 @@ def index():
     // Convert local schedule settings into UTC Cron expression
     function generateUtcCron(freq, localTimeStr, localDayIdx, localMonthDay) {
       if (freq === 'disabled') return 'disabled';
+      if (freq === 'hourly') return '0 * * * *';
 
       const [hStr, mStr] = (localTimeStr || "09:00").split(':');
       const localH = parseInt(hStr, 10);
@@ -1011,6 +1026,9 @@ def index():
     function parseUtcCronToLocal(cron) {
       if (!cron || cron === 'disabled') {
         return { freq: 'disabled', time: '09:00', day: 0, monthDay: 1 };
+      }
+      if (cron === '0 * * * *' || cron === '* * * * *' || cron.startsWith('0 *')) {
+        return { freq: 'hourly', time: '09:00', day: 0, monthDay: 1 };
       }
       const parts = cron.trim().split(/\s+/);
       if (parts.length < 5) {
@@ -1057,7 +1075,7 @@ def index():
       const cronExpr = generateUtcCron(currentFrequency, timeVal, dayVal, monthDayVal);
 
       await sendAction('set_schedule', {
-        frequency: isEnabled ? currentFrequency : 'daily',
+        frequency: isEnabled ? currentFrequency : 'hourly',
         enabled: isEnabled,
         cron_expr: cronExpr
       });

@@ -194,7 +194,7 @@ def test_safe_field_merge(base_contact: UnifiedContact) -> None:
     g_action = plan.to_update_in_google[0]
     assert g_action.target_provider == "google"
     assert g_action.contact_id == "people/c100"
-    assert g_action.updated_contact.organizations[0].title == "principal engineer"
+    assert g_action.updated_contact.organizations[0].title == "Principal Engineer"
 
     # Microsoft should receive the notes update from Google
     assert len(plan.to_update_in_ms) == 1
@@ -687,6 +687,49 @@ def test_ms_to_google_update_propagation() -> None:
     assert len(plan.to_update_in_ms) == 0
     assert plan.to_update_in_google[0].contact_id == "people/c_prop"
     assert plan.to_update_in_google[0].updated_contact.phones[0].value == "+15559990000"
+
+
+def test_case_integrity_preservation() -> None:
+    """Verifies that field updates preserve exact casing (e.g. CamelCase, mixed case, uppercase)."""
+    base = UnifiedContact(
+        google_resource_name="people/c_case",
+        ms_id="ms_case",
+        name=NameDetails(given_name="Jane", family_name="Doe"),
+        organizations=[OrganizationDetails(company="Old Company", title="Staff Engineer")],
+        addresses=[PostalAddress(street="123 Oak St", city="New York", state="NY", postal_code="10001", country="USA")],
+        notes="Initial Note with Mixed Casing.",
+    )
+
+    # Google updates with specific capitalization
+    g_updated = base.model_copy(deep=True)
+    g_updated.organizations[0].company = "Acme Global Solutions LLC"
+    g_updated.organizations[0].title = "Principal Solutions Architect"
+    g_updated.addresses[0].street = "742 Evergreen Terrace, Suite 400B"
+    g_updated.addresses[0].city = "San Francisco"
+    g_updated.addresses[0].state = "CA"
+    g_updated.notes = "Special VIP Partner - DO NOT DELETE"
+
+    ms_unchanged = base.model_copy(deep=True)
+
+    plan = SyncPlanner.plan_sync(
+        google_contacts=[g_updated],
+        ms_contacts=[ms_unchanged],
+        base_contacts={"people/c_case": base},
+        stored_mappings={"people/c_case": "ms_case"},
+    )
+
+    assert len(plan.to_update_in_ms) == 1
+    ms_action = plan.to_update_in_ms[0]
+    updated_ms = ms_action.updated_contact
+
+    # Verify exact casing is preserved across all updated fields
+    assert updated_ms.organizations[0].company == "Acme Global Solutions LLC"
+    assert updated_ms.organizations[0].title == "Principal Solutions Architect"
+    assert updated_ms.addresses[0].street == "742 Evergreen Terrace, Suite 400B"
+    assert updated_ms.addresses[0].city == "San Francisco"
+    assert updated_ms.addresses[0].state == "CA"
+    assert updated_ms.notes == "Special VIP Partner - DO NOT DELETE"
+
 
 
 

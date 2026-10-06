@@ -119,6 +119,10 @@ def get_database_url() -> str:
     """Retrieves Database connection URL from environment (defaulting to local SQLite)."""
     db_url = os.getenv("DATABASE_URL")
     if db_url:
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
+        elif db_url.startswith("postgresql://") and not db_url.startswith("postgresql+"):
+            db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
         return db_url
     return "sqlite:///syncgm_dev.db"
 

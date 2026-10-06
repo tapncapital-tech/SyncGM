@@ -8,4 +8,6 @@ __pycache__
 *.pyd
 .pytest_cache
 .tmp
-syncgm.db
+*.db
+.env
+

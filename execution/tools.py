@@ -344,7 +344,7 @@ def resolve_conflict_item(
 
 def configure_schedule(
     user_id: str,
-    frequency: str = "daily",
+    frequency: str = "hourly",
     enabled: bool = True,
     cron_expr: Optional[str] = None,
     db_session: Optional[Session] = None,
@@ -358,7 +358,7 @@ def configure_schedule(
         "weekly": "0 6 * * 0",
         "monthly": "0 6 1 * *",
     }
-    final_cron = "disabled" if not enabled else (cron_expr or cron_map.get(frequency, "0 6 * * *"))
+    final_cron = "disabled" if not enabled else (cron_expr or cron_map.get(frequency, "0 * * * *"))
 
     if db_session:
         repo = SyncRepository(db_session)

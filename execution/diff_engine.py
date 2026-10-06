@@ -43,7 +43,7 @@ class ThreeWayDiffEngine:
 
     @staticmethod
     def _extract_field_map(contact: Optional[UnifiedContact]) -> dict[str, Any]:
-        """Extracts normalized key-value fields from a UnifiedContact for 3-way differential comparison."""
+        """Extracts key-value fields from a UnifiedContact preserving original casing."""
         if not contact:
             return {
                 "given_name": None,
@@ -68,23 +68,36 @@ class ThreeWayDiffEngine:
         addr = contact.addresses[0] if contact.addresses else None
 
         return {
-            "given_name": normalize_text(contact.name.given_name),
-            "family_name": normalize_text(contact.name.family_name),
-            "middle_name": normalize_text(contact.name.middle_name),
-            "prefix": normalize_text(contact.name.prefix),
-            "suffix": normalize_text(contact.name.suffix),
-            "primary_email": normalize_email(contact.primary_email),
-            "primary_phone": normalize_phone(contact.primary_phone),
-            "company": normalize_text(org.company) if (org and org.company) else None,
-            "department": normalize_text(org.department) if (org and org.department) else None,
-            "title": normalize_text(org.title) if (org and org.title) else None,
-            "street": normalize_text(addr.street) if (addr and addr.street) else None,
-            "city": normalize_text(addr.city) if (addr and addr.city) else None,
-            "state": normalize_text(addr.state) if (addr and addr.state) else None,
-            "postal_code": normalize_text(addr.postal_code) if (addr and addr.postal_code) else None,
-            "country": normalize_text(addr.country) if (addr and addr.country) else None,
+            "given_name": contact.name.given_name,
+            "family_name": contact.name.family_name,
+            "middle_name": contact.name.middle_name,
+            "prefix": contact.name.prefix,
+            "suffix": contact.name.suffix,
+            "primary_email": contact.primary_email,
+            "primary_phone": contact.primary_phone,
+            "company": org.company if (org and org.company) else None,
+            "department": org.department if (org and org.department) else None,
+            "title": org.title if (org and org.title) else None,
+            "street": addr.street if (addr and addr.street) else None,
+            "city": addr.city if (addr and addr.city) else None,
+            "state": addr.state if (addr and addr.state) else None,
+            "postal_code": addr.postal_code if (addr and addr.postal_code) else None,
+            "country": addr.country if (addr and addr.country) else None,
             "notes": contact.notes.strip() if (contact.notes and contact.notes.strip()) else None,
         }
+
+    @staticmethod
+    def _normalize_field_val(field: str, val: Any) -> Any:
+        """Helper to normalize field values for comparison without mutating source casing."""
+        if val is None:
+            return None
+        if field == "primary_email":
+            return normalize_email(str(val))
+        elif field == "primary_phone":
+            return normalize_phone(str(val))
+        elif isinstance(val, str):
+            return normalize_text(val)
+        return val
 
     @classmethod
     def compare_pair(
@@ -113,43 +126,47 @@ class ThreeWayDiffEngine:
             v_g = f_goog.get(field)
             v_m = f_ms.get(field)
 
-            # 1. Values on both providers already match
-            if v_g == v_m:
+            nb = cls._normalize_field_val(field, v_b)
+            ng = cls._normalize_field_val(field, v_g)
+            nm = cls._normalize_field_val(field, v_m)
+
+            # 1. Normalized values on both providers already match
+            if ng == nm:
                 continue
 
             # 2. Both providers diverged from base (or both added different values when base was empty)
-            if v_b is None:
+            if nb is None:
                 # Field added on both sides differently
-                if v_g is not None and v_m is not None and v_g != v_m:
+                if ng is not None and nm is not None and ng != nm:
                     conflicting_fields[field] = {"base": None, "google": v_g, "microsoft": v_m}
                     continue
                 # Field added cleanly on Google only
-                elif v_g is not None and v_m is None:
+                elif ng is not None and nm is None:
                     ms_patches.append(
                         FieldPatch(field_name=field, old_value=v_m, new_value=v_g, source_provider="google")
                     )
                     continue
                 # Field added cleanly on Microsoft only
-                elif v_m is not None and v_g is None:
+                elif nm is not None and ng is None:
                     google_patches.append(
                         FieldPatch(field_name=field, old_value=v_g, new_value=v_m, source_provider="microsoft")
                     )
                     continue
 
             # Base existed
-            if v_g != v_b and v_m != v_b:
+            if ng != nb and nm != nb:
                 # Both sides modified the same field to different values -> HARD CONFLICT
                 conflicting_fields[field] = {"base": v_b, "google": v_g, "microsoft": v_m}
                 continue
 
-            if v_g != v_b and v_m == v_b:
+            if ng != nb and nm == nb:
                 # Google updated this field, MS untouched -> Propagate to MS
                 ms_patches.append(
                     FieldPatch(field_name=field, old_value=v_m, new_value=v_g, source_provider="google")
                 )
                 continue
 
-            if v_m != v_b and v_g == v_b:
+            if nm != nb and ng == nb:
                 # MS updated this field, Google untouched -> Propagate to Google
                 google_patches.append(
                     FieldPatch(field_name=field, old_value=v_g, new_value=v_m, source_provider="microsoft")

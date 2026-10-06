@@ -357,6 +357,12 @@ class SyncGMAgent:
 
             chips = [
                 ActionChip(
+                    id="sched_hourly",
+                    label="Enable: Hourly",
+                    action=ActionType.SET_SCHEDULE,
+                    payload={"frequency": "hourly", "enabled": True},
+                ),
+                ActionChip(
                     id="sched_daily",
                     label="Enable: Daily",
                     action=ActionType.SET_SCHEDULE,
