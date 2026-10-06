@@ -131,8 +131,8 @@ def test_agent_compare_and_schedule_flow(mock_store: InMemorySyncStore) -> None:
 
     # Schedule Configuration Flow
     sched_resp = agent.handle_action(user_id=user_id, action=ActionType.CONFIGURE_SCHEDULE)
-    assert "Automated Background Sync Schedule" in sched_resp.message
-    assert len(sched_resp.action_chips) == 6
+    assert "Automatic Background Sync" in sched_resp.message
+    assert len(sched_resp.action_chips) == 3
 
     # Set Schedule to Hourly
     set_sched_resp = agent.handle_action(

@@ -790,76 +790,15 @@ def index():
 
     <!-- Main Command Hero Card -->
     <div class="hero-card">
-      <!-- Integrated Schedule Controls directly on dashboard (Daily, Weekly, Monthly, Off) -->
+      <!-- Automated Hourly Sync Toggle -->
       <div class="schedule-section">
         <div class="schedule-header">
-          <div class="schedule-title">⏱️ Automated Sync</div>
+          <div class="schedule-title">⏱️ Automatic Hourly Sync</div>
           <div id="schedule-badge" class="schedule-status-badge">OFF</div>
         </div>
         <div class="pills-group">
-          <button id="pill-hourly" class="pill-btn" onclick="selectFrequency('hourly')">Hourly</button>
-          <button id="pill-daily" class="pill-btn" onclick="selectFrequency('daily')">Daily</button>
-          <button id="pill-weekly" class="pill-btn" onclick="selectFrequency('weekly')">Weekly</button>
-          <button id="pill-monthly" class="pill-btn" onclick="selectFrequency('monthly')">Monthly</button>
-          <button id="pill-disabled" class="pill-btn active" onclick="selectFrequency('disabled')">Off</button>
-        </div>
-
-        <!-- Custom Day & Time Picker Row -->
-        <div id="schedule-details-row" class="schedule-details-row" style="display: none;">
-          <!-- Day of week selector (shown for weekly) -->
-          <div id="day-picker-group" class="picker-group" style="display: none;">
-            <label for="schedule-day">Day:</label>
-            <select id="schedule-day" class="picker-select" onchange="updateScheduleBadgePreview()">
-              <option value="0">Sunday</option>
-              <option value="1">Monday</option>
-              <option value="2">Tuesday</option>
-              <option value="3">Wednesday</option>
-              <option value="4">Thursday</option>
-              <option value="5">Friday</option>
-              <option value="6">Saturday</option>
-            </select>
-          </div>
-
-          <!-- Day of month selector (shown for monthly: 1st to 25th) -->
-          <div id="month-day-picker-group" class="picker-group" style="display: none;">
-            <label for="schedule-month-day">Date:</label>
-            <select id="schedule-month-day" class="picker-select" onchange="updateScheduleBadgePreview()">
-              <option value="1">1st</option>
-              <option value="2">2nd</option>
-              <option value="3">3rd</option>
-              <option value="4">4th</option>
-              <option value="5">5th</option>
-              <option value="6">6th</option>
-              <option value="7">7th</option>
-              <option value="8">8th</option>
-              <option value="9">9th</option>
-              <option value="10">10th</option>
-              <option value="11">11th</option>
-              <option value="12">12th</option>
-              <option value="13">13th</option>
-              <option value="14">14th</option>
-              <option value="15">15th</option>
-              <option value="16">16th</option>
-              <option value="17">17th</option>
-              <option value="18">18th</option>
-              <option value="19">19th</option>
-              <option value="20">20th</option>
-              <option value="21">21st</option>
-              <option value="22">22nd</option>
-              <option value="23">23rd</option>
-              <option value="24">24th</option>
-              <option value="25">25th</option>
-            </select>
-          </div>
-
-          <!-- Local Time picker (shown for daily, weekly, monthly) -->
-          <div id="time-picker-group" class="picker-group">
-            <label for="schedule-time">Local Time:</label>
-            <input type="time" id="schedule-time" class="picker-time" value="09:00" onchange="updateScheduleBadgePreview()">
-            <span id="tz-name" class="tz-label">LOCAL</span>
-          </div>
-
-          <button id="save-sched-btn" class="save-schedule-btn" onclick="applySchedule()">Save Schedule</button>
+          <button id="pill-hourly" class="pill-btn" onclick="toggleHourlySync(true)">Enabled (Every Hour)</button>
+          <button id="pill-disabled" class="pill-btn active" onclick="toggleHourlySync(false)">Disabled (Manual Only)</button>
         </div>
       </div>
 
@@ -902,190 +841,39 @@ def index():
       }
     }
 
-    function formatTime12h(timeStr) {
-      if (!timeStr) return "09:00 AM";
-      const [hStr, mStr] = timeStr.split(':');
-      let h = parseInt(hStr, 10);
-      const m = mStr || "00";
-      const ampm = h >= 12 ? "PM" : "AM";
-      h = h % 12;
-      if (h === 0) h = 12;
-      const hFormatted = h < 10 ? '0' + h : '' + h;
-      return `${hFormatted}:${m} ${ampm}`;
-    }
+    let isHourlySyncEnabled = false;
 
-    function getOrdinalSuffix(n) {
-      const s = ["th", "st", "nd", "rd"];
-      const v = n % 100;
-      return n + (s[(v - 20) % 10] || s[v] || s[0]).toUpperCase();
-    }
-
-    const DAYS_NAMES = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
-
-    function updateScheduleBadgePreview() {
+    function updateScheduleBadge() {
       const badge = document.getElementById('schedule-badge');
-      const timeVal = document.getElementById('schedule-time').value || "09:00";
-      const time12 = formatTime12h(timeVal);
-      const tz = getLocalTimeZoneAbbr();
+      const hourlyBtn = document.getElementById('pill-hourly');
+      const offBtn = document.getElementById('pill-disabled');
 
-      if (currentFrequency === 'disabled') {
-        badge.innerText = 'OFF';
-        return;
-      }
-      if (currentFrequency === 'hourly') {
-        badge.innerText = 'HOURLY (EVERY HOUR)';
-        return;
-      }
-      if (currentFrequency === 'daily') {
-        badge.innerText = `DAILY @ ${time12} ${tz} (LOCAL)`;
-      } else if (currentFrequency === 'weekly') {
-        const dayIdx = parseInt(document.getElementById('schedule-day').value || '0', 10);
-        const dayName = DAYS_NAMES[dayIdx] || "SUN";
-        badge.innerText = `WEEKLY (${dayName} @ ${time12} ${tz})`;
-      } else if (currentFrequency === 'monthly') {
-        const monthDayVal = parseInt(document.getElementById('schedule-month-day').value || '1', 10);
-        const ord = getOrdinalSuffix(monthDayVal);
-        badge.innerText = `MONTHLY (${ord} @ ${time12} ${tz})`;
-      }
-    }
-
-    async function selectFrequency(freq, saveIfDisabled = true) {
-      currentFrequency = freq;
-      document.querySelectorAll('.pill-btn').forEach(btn => btn.classList.remove('active'));
-      const activeBtn = document.getElementById('pill-' + freq);
-      if (activeBtn) activeBtn.classList.add('active');
-
-      const detailsRow = document.getElementById('schedule-details-row');
-      const dayGroup = document.getElementById('day-picker-group');
-      const monthDayGroup = document.getElementById('month-day-picker-group');
-      const timeGroup = document.getElementById('time-picker-group');
-
-      if (freq === 'disabled') {
-        detailsRow.style.display = 'none';
-        if (saveIfDisabled) {
-          await sendAction('set_schedule', {
-            frequency: 'disabled',
-            enabled: false,
-            cron_expr: 'disabled'
-          });
-        }
-      } else if (freq === 'hourly') {
-        detailsRow.style.display = 'none';
-        if (saveIfDisabled) {
-          await sendAction('set_schedule', {
-            frequency: 'hourly',
-            enabled: true,
-            cron_expr: '0 * * * *'
-          });
-        }
+      if (isHourlySyncEnabled) {
+        badge.innerText = 'ON (HOURLY)';
+        badge.className = 'schedule-status-badge active';
+        if (hourlyBtn) hourlyBtn.classList.add('active');
+        if (offBtn) offBtn.classList.remove('active');
       } else {
-        detailsRow.style.display = 'flex';
-        dayGroup.style.display = (freq === 'weekly') ? 'flex' : 'none';
-        monthDayGroup.style.display = (freq === 'monthly') ? 'flex' : 'none';
-        timeGroup.style.display = 'flex';
+        badge.innerText = 'OFF';
+        badge.className = 'schedule-status-badge';
+        if (hourlyBtn) hourlyBtn.classList.remove('active');
+        if (offBtn) offBtn.classList.add('active');
       }
-
-      updateScheduleBadgePreview();
     }
 
-    // Convert local schedule settings into UTC Cron expression
-    function generateUtcCron(freq, localTimeStr, localDayIdx, localMonthDay) {
-      if (freq === 'disabled') return 'disabled';
-      if (freq === 'hourly') return '0 * * * *';
-
-      const [hStr, mStr] = (localTimeStr || "09:00").split(':');
-      const localH = parseInt(hStr, 10);
-      const localM = parseInt(mStr, 10);
-
-      // Create a local date to get exact UTC conversion
-      const now = new Date();
-      const localDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), localH, localM, 0);
-
-      const utcH = localDate.getUTCHours();
-      const utcM = localDate.getUTCMinutes();
-
-      if (freq === 'daily') {
-        return `${utcM} ${utcH} * * *`;
-      }
-      if (freq === 'weekly') {
-        // Calculate UTC day of week based on target local day
-        const curDay = now.getDay();
-        const dayDiff = (localDayIdx - curDay + 7) % 7;
-        const targetLocalDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + dayDiff, localH, localM, 0);
-        const utcDOW = targetLocalDate.getUTCDay();
-        return `${utcM} ${utcH} * * ${utcDOW}`;
-      }
-      if (freq === 'monthly') {
-        const dom = Math.min(Math.max(parseInt(localMonthDay || '1', 10), 1), 25);
-        return `${utcM} ${utcH} ${dom} * *`;
-      }
-      return `${utcM} ${utcH} * * *`;
-    }
-
-    // Convert UTC cron into local UI state
-    function parseUtcCronToLocal(cron) {
-      if (!cron || cron === 'disabled') {
-        return { freq: 'disabled', time: '09:00', day: 0, monthDay: 1 };
-      }
-      if (cron === '0 * * * *' || cron === '* * * * *' || cron.startsWith('0 *')) {
-        return { freq: 'hourly', time: '09:00', day: 0, monthDay: 1 };
-      }
-      const parts = cron.trim().split(/\s+/);
-      if (parts.length < 5) {
-        return { freq: 'daily', time: '09:00', day: 0, monthDay: 1 };
-      }
-      const utcM = parseInt(parts[0], 10) || 0;
-      const utcH = parseInt(parts[1], 10) || 0;
-      const dom = parts[2];
-      const dow = parts[4];
-
-      // Convert UTC hour/min to Local Date
-      const d = new Date();
-      d.setUTCHours(utcH, utcM, 0, 0);
-      const localH = String(d.getHours()).padStart(2, '0');
-      const localM = String(d.getMinutes()).padStart(2, '0');
-      const localTime = `${localH}:${localM}`;
-
-      let freq = 'daily';
-      let localDay = 0;
-      let localMonthDay = 1;
-
-      if (dom !== '*' && dow === '*') {
-        freq = 'monthly';
-        const parsedDom = parseInt(dom, 10) || 1;
-        localMonthDay = Math.min(Math.max(parsedDom, 1), 25);
-      } else if (dow !== '*') {
-        freq = 'weekly';
-        const utcDOW = parseInt(dow, 10) || 0;
-        // Calculate local DOW
-        const curUtcDay = d.getUTCDay();
-        const curLocDay = d.getDay();
-        const dowDiff = curLocDay - curUtcDay;
-        localDay = (utcDOW + dowDiff + 7) % 7;
-      }
-
-      return { freq, time: localTime, day: localDay, monthDay: localMonthDay };
-    }
-
-    async function applySchedule() {
-      const isEnabled = (currentFrequency !== 'disabled');
-      const timeVal = document.getElementById('schedule-time').value || "09:00";
-      const dayVal = parseInt(document.getElementById('schedule-day').value || "0", 10);
-      const monthDayVal = parseInt(document.getElementById('schedule-month-day').value || "1", 10);
-      const cronExpr = generateUtcCron(currentFrequency, timeVal, dayVal, monthDayVal);
+    async function toggleHourlySync(enable) {
+      isHourlySyncEnabled = enable;
+      updateScheduleBadge();
 
       await sendAction('set_schedule', {
-        frequency: isEnabled ? currentFrequency : 'hourly',
-        enabled: isEnabled,
-        cron_expr: cronExpr
+        frequency: enable ? 'hourly' : 'disabled',
+        enabled: enable,
+        cron_expr: enable ? '0 * * * *' : 'disabled'
       });
     }
 
     async function loadUserState() {
       try {
-        const tz = getLocalTimeZoneAbbr();
-        document.getElementById('tz-name').innerText = tz;
-
         const res = await fetch('/api/v1/user/state?user_id=' + USER_ID);
         if (!res.ok) return;
         const state = await res.json();
@@ -1115,16 +903,9 @@ def index():
           msLink.innerText = 'Connect';
         }
 
-        // Restore schedule selection and local inputs
-        if (state.schedule_cron && state.schedule_cron !== 'disabled') {
-          const parsed = parseUtcCronToLocal(state.schedule_cron);
-          document.getElementById('schedule-time').value = parsed.time;
-          document.getElementById('schedule-day').value = parsed.day;
-          document.getElementById('schedule-month-day').value = parsed.monthDay || 1;
-          selectFrequency(parsed.freq, false);
-        } else {
-          selectFrequency('disabled', false);
-        }
+        // Restore hourly schedule status
+        isHourlySyncEnabled = (state.schedule_cron && state.schedule_cron !== 'disabled');
+        updateScheduleBadge();
 
         if (state.last_log_message) {
           document.getElementById('agent-msg').innerText = state.last_log_message;
@@ -1163,9 +944,11 @@ def index():
     function renderResponse(data) {
       document.getElementById('agent-msg').innerText = data.message;
 
-      // Refresh schedule display if schedule changed
       if (data.action === 'set_schedule') {
-        updateScheduleBadgePreview();
+        if (data.data && typeof data.data.enabled === 'boolean') {
+          isHourlySyncEnabled = data.data.enabled;
+        }
+        updateScheduleBadge();
       }
     }
 

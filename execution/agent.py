@@ -344,47 +344,27 @@ class SyncGMAgent:
         # 7. Configure Schedule
         # ---------------------------------------------------------------------
         elif act_enum == ActionType.CONFIGURE_SCHEDULE:
-            current_sched = self.store.schedule_config.get(user_id, {"frequency": "daily", "enabled": False})
-            status_text = "ENABLED" if current_sched.get("enabled") else "DISABLED"
-            freq_text = current_sched.get("frequency", "daily")
+            current_sched = self.store.schedule_config.get(user_id, {"frequency": "hourly", "enabled": False})
+            status_text = "ENABLED (HOURLY)" if current_sched.get("enabled") else "DISABLED (MANUAL ONLY)"
 
             msg = (
-                f"### ⏱️ Automated Background Sync Schedule\n\n"
-                f"- **Current Status:** `{status_text}`\n"
-                f"- **Current Frequency:** `{freq_text}`\n\n"
-                f"Select an option below to update your background sync:"
+                f"### ⏱️ Automatic Background Sync\n\n"
+                f"- **Current Status:** `{status_text}`\n\n"
+                f"When enabled, SyncGM automatically checks and synchronizes contact changes every hour."
             )
 
             chips = [
                 ActionChip(
                     id="sched_hourly",
-                    label="Enable: Hourly",
+                    label="Enable Hourly Sync",
                     action=ActionType.SET_SCHEDULE,
-                    payload={"frequency": "hourly", "enabled": True},
-                ),
-                ActionChip(
-                    id="sched_daily",
-                    label="Enable: Daily",
-                    action=ActionType.SET_SCHEDULE,
-                    payload={"frequency": "daily", "enabled": True},
-                ),
-                ActionChip(
-                    id="sched_weekly",
-                    label="Enable: Weekly",
-                    action=ActionType.SET_SCHEDULE,
-                    payload={"frequency": "weekly", "enabled": True},
-                ),
-                ActionChip(
-                    id="sched_monthly",
-                    label="Enable: Monthly",
-                    action=ActionType.SET_SCHEDULE,
-                    payload={"frequency": "monthly", "enabled": True},
+                    payload={"frequency": "hourly", "enabled": True, "cron_expr": "0 * * * *"},
                 ),
                 ActionChip(
                     id="sched_disable",
-                    label="Disable Schedule (Off)",
+                    label="Disable (Manual Only)",
                     action=ActionType.SET_SCHEDULE,
-                    payload={"frequency": freq_text, "enabled": False},
+                    payload={"frequency": "disabled", "enabled": False, "cron_expr": "disabled"},
                 ),
                 ActionChip(id="chip_main", label="Back to Main Menu", action=ActionType.MAIN_MENU),
             ]
