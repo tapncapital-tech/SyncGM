@@ -188,9 +188,10 @@ def email_login(
 
 @app.get("/api/v1/auth/logout", tags=["Global Authentication"])
 @app.post("/api/v1/auth/logout", tags=["Global Authentication"])
-def logout_user(response: Response):
-    response.delete_cookie(key="syncgm_session", path="/")
-    return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+def logout_user():
+    redirect_resp = RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+    redirect_resp.delete_cookie(key="syncgm_session", path="/", samesite="lax")
+    return redirect_resp
 
 
 @app.get("/api/v1/auth/me", tags=["Global Authentication"])
@@ -451,7 +452,13 @@ def get_user_state(
     syncgm_session: Optional[str] = Cookie(None),
     db: Session = Depends(get_db),
 ):
-    actual_id = user_id or syncgm_session or "test_user"
+    actual_id = user_id or syncgm_session
+    if not actual_id:
+        if os.getenv("TESTING") == "true":
+            actual_id = "test_user"
+        else:
+            raise HTTPException(status_code=401, detail="Not authenticated.")
+
     repo = SyncRepository(db)
     user = repo.get_user(actual_id)
     if not user:
@@ -1503,6 +1510,7 @@ def index(
     }
 
     async function handleLogout() {
+      document.cookie = "syncgm_session=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
       try {
         await fetch('/api/v1/auth/logout', { method: 'POST' });
       } catch (_) {}
