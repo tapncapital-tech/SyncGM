@@ -107,8 +107,13 @@ def get_db():
 # REQUEST / RESPONSE SCHEMAS
 # =============================================================================
 
+class EmailLoginRequest(BaseModel):
+    email: str = Field(description="User's email address")
+    name: Optional[str] = Field(default=None, description="Optional user name")
+
+
 class AgentActionRequest(BaseModel):
-    user_id: str = Field(description="Unique User Account identifier")
+    user_id: Optional[str] = Field(default=None, description="Unique User Account identifier")
     action: str = Field(default="sync_now", description="Action name or ActionType enum value")
     payload: Optional[dict[str, Any]] = Field(default_factory=dict, description="Action-specific payload parameters")
 
@@ -149,11 +154,154 @@ def verify_scheduler_auth(
 
 
 # =============================================================================
-# OAUTH 2.0 CONNECT ENDPOINTS (Section 8 & Section 9)
+# GLOBAL USER AUTHENTICATION ENDPOINTS
+# =============================================================================
+
+@app.post("/api/v1/auth/login-email", tags=["Global Authentication"])
+def email_login(
+    req: EmailLoginRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    email_clean = req.email.strip().lower()
+    if "@" not in email_clean or "." not in email_clean:
+        raise HTTPException(status_code=400, detail="Please enter a valid email address.")
+    
+    display_name = req.name.strip() if req.name else email_clean.split("@")[0].capitalize()
+    repo = SyncRepository(db)
+    user = repo.get_or_create_user(email=email_clean, display_name=display_name)
+    
+    response.set_cookie(
+        key="syncgm_session",
+        value=user.id,
+        max_age=30 * 86400,
+        path="/",
+        samesite="lax",
+    )
+    return {
+        "status": "SUCCESS",
+        "user_id": user.id,
+        "email": user.email,
+        "display_name": user.display_name,
+    }
+
+
+@app.get("/api/v1/auth/logout", tags=["Global Authentication"])
+@app.post("/api/v1/auth/logout", tags=["Global Authentication"])
+def logout_user(response: Response):
+    response.delete_cookie(key="syncgm_session", path="/")
+    return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.get("/api/v1/auth/me", tags=["Global Authentication"])
+def get_current_user_profile(
+    syncgm_session: Optional[str] = Cookie(None),
+    user_id: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    actual_id = user_id or syncgm_session
+    if not actual_id:
+        if os.getenv("TESTING") == "true":
+            actual_id = "test_user"
+        else:
+            raise HTTPException(status_code=401, detail="Not authenticated.")
+    
+    repo = SyncRepository(db)
+    user = repo.get_user(actual_id)
+    if not user:
+        user = repo.get_or_create_user(email=f"{actual_id}@example.com")
+        
+    return {
+        "user_id": user.id,
+        "email": user.email,
+        "display_name": user.display_name,
+        "google_connected": user.google_refresh_token_enc is not None,
+        "ms_connected": user.ms_refresh_token_enc is not None,
+        "schedule_cron": user.schedule_cron or "disabled",
+    }
+
+
+@app.get("/api/v1/auth/global/google/login", tags=["Global Authentication"])
+def global_google_login():
+    client_id = os.getenv("GOOGLE_CLIENT_ID", "")
+    redirect_uri = os.getenv("GOOGLE_AUTH_REDIRECT_URI") or (
+        os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8080/api/v1/auth/google/callback").replace(
+            "/api/v1/auth/google/callback", "/api/v1/auth/global/google/callback"
+        )
+    )
+    scope = "openid email profile"
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": scope,
+        "prompt": "select_account",
+        "state": "global_login",
+    }
+    url = f"https://accounts.google.com/o/oauth2/v2/auth?{urllib.parse.urlencode(params)}"
+    return RedirectResponse(url)
+
+
+@app.get("/api/v1/auth/global/google/callback", tags=["Global Authentication"])
+def global_google_callback(
+    code: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    client_id = os.getenv("GOOGLE_CLIENT_ID", "")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "")
+    redirect_uri = os.getenv("GOOGLE_AUTH_REDIRECT_URI") or (
+        os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8080/api/v1/auth/google/callback").replace(
+            "/api/v1/auth/google/callback", "/api/v1/auth/global/google/callback"
+        )
+    )
+    user_id = None
+    if client_id and client_secret:
+        try:
+            resp = httpx.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "code": code,
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "redirect_uri": redirect_uri,
+                    "grant_type": "authorization_code",
+                },
+                timeout=15.0,
+            )
+            data = resp.json()
+            access_token = data.get("access_token")
+            if access_token:
+                user_info_resp = httpx.get(
+                    "https://www.googleapis.com/oauth2/v2/userinfo",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    timeout=10.0,
+                )
+                user_info = user_info_resp.json()
+                email = user_info.get("email")
+                name = user_info.get("name") or user_info.get("given_name") or "Google User"
+                if email:
+                    repo = SyncRepository(db)
+                    user = repo.get_or_create_user(email=email, display_name=name)
+                    user_id = user.id
+        except Exception as e:
+            logger.error("Error exchanging Google global auth code: %s", e)
+
+    response = RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
+    if user_id:
+        response.set_cookie(key="syncgm_session", value=user_id, max_age=30 * 86400, path="/", samesite="lax")
+    return response
+
+
+# =============================================================================
+# OAUTH 2.0 PROVIDER CONNECT ENDPOINTS (Section 8 & Section 9)
 # =============================================================================
 
 @app.get("/api/v1/auth/google/login", tags=["OAuth 2.0"])
-def google_oauth_login(user_id: str = Query("test_user")):
+def google_oauth_login(
+    user_id: Optional[str] = Query(None),
+    syncgm_session: Optional[str] = Cookie(None),
+):
+    actual_id = user_id or syncgm_session or "test_user"
     client_id = os.getenv("GOOGLE_CLIENT_ID", "mock-google-client-id.apps.googleusercontent.com")
     redirect_uri = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8080/api/v1/auth/google/callback")
     scope = "https://www.googleapis.com/auth/contacts"
@@ -165,7 +313,7 @@ def google_oauth_login(user_id: str = Query("test_user")):
         "scope": scope,
         "access_type": "offline",
         "prompt": "consent",
-        "state": user_id,
+        "state": actual_id,
     }
     url = f"https://accounts.google.com/o/oauth2/v2/auth?{urllib.parse.urlencode(params)}"
     return RedirectResponse(url)
@@ -198,7 +346,9 @@ def google_oauth_callback(
             refresh_token = data.get("refresh_token") or data.get("access_token")
             if refresh_token:
                 repo = SyncRepository(db)
-                user = repo.get_or_create_user(email=f"{state}@example.com")
+                user = repo.get_user(state)
+                if not user:
+                    user = repo.get_or_create_user(email=f"{state}@example.com")
                 repo.update_user_tokens(user_id=user.id, google_refresh_token=refresh_token)
         except Exception as e:
             logger.error("Error exchanging Google code: %s", e)
@@ -209,7 +359,11 @@ def google_oauth_callback(
 
 
 @app.get("/api/v1/auth/ms/login", tags=["OAuth 2.0"])
-def ms_oauth_login(user_id: str = Query("test_user")):
+def ms_oauth_login(
+    user_id: Optional[str] = Query(None),
+    syncgm_session: Optional[str] = Cookie(None),
+):
+    actual_id = user_id or syncgm_session or "test_user"
     client_id = os.getenv("MS_CLIENT_ID", "mock-ms-client-id")
     redirect_uri = os.getenv("MS_REDIRECT_URI", "http://localhost:8080/api/v1/auth/ms/callback")
     scope = "Contacts.ReadWrite offline_access"
@@ -220,7 +374,7 @@ def ms_oauth_login(user_id: str = Query("test_user")):
         "response_type": "code",
         "scope": scope,
         "prompt": "consent",
-        "state": user_id,
+        "state": actual_id,
     }
     url = f"https://login.microsoftonline.com/common/oauth2/v2.0/authorize?{urllib.parse.urlencode(params)}"
     return RedirectResponse(url)
@@ -254,7 +408,9 @@ def ms_oauth_callback(
             refresh_token = data.get("refresh_token") or data.get("access_token")
             if refresh_token:
                 repo = SyncRepository(db)
-                user = repo.get_or_create_user(email=f"{state}@example.com")
+                user = repo.get_user(state)
+                if not user:
+                    user = repo.get_or_create_user(email=f"{state}@example.com")
                 repo.update_user_tokens(user_id=user.id, ms_refresh_token=refresh_token)
         except Exception as e:
             logger.error("Error exchanging Microsoft code: %s", e)
@@ -264,7 +420,7 @@ def ms_oauth_callback(
     return response
 
 
-@app.post("/api/v1/auth/disconnect", tags=["Authentication"])
+@app.post("/api/v1/auth/disconnect", tags=["OAuth 2.0"])
 def disconnect_provider_auth(
     provider: str = Query(..., pattern="^(google|microsoft|ms)$"),
     user_id: Optional[str] = Query(None),
@@ -331,9 +487,401 @@ def get_user_state(
 # WEB UI & REST ENDPOINTS
 # =============================================================================
 
+# =============================================================================
+# WEB UI: LOGIN & DASHBOARD INTERFACES
+# =============================================================================
+
+@app.get("/login", response_class=HTMLResponse, tags=["Web Interface"])
+def login_page(
+    syncgm_session: Optional[str] = Cookie(None),
+    db: Session = Depends(get_db),
+):
+    """Renders the Modern Global Sign-in Page."""
+    if syncgm_session:
+        repo = SyncRepository(db)
+        if repo.get_user(syncgm_session):
+            return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+
+    html_content = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SyncGM | Sign In</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #07090E;
+      --bg-card: rgba(15, 20, 32, 0.8);
+      --border-card: rgba(255, 255, 255, 0.08);
+      --border-glow: rgba(99, 102, 241, 0.35);
+      --primary: #6366F1;
+      --primary-gradient: linear-gradient(135deg, #4F46E5 0%, #7C3AED 50%, #EC4899 100%);
+      --text-main: #F8FAFC;
+      --text-muted: #94A3B8;
+      --text-dim: #64748B;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, sans-serif;
+      background: #07090E;
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.18) 0px, transparent 50%),
+        radial-gradient(at 100% 0%, rgba(236, 72, 153, 0.15) 0px, transparent 50%),
+        radial-gradient(at 50% 100%, rgba(6, 182, 212, 0.1) 0px, transparent 50%);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 16px;
+    }
+
+    .auth-container {
+      width: 100%;
+      max-width: 440px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .auth-card {
+      background: var(--bg-card);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border: 1px solid var(--border-card);
+      border-radius: 24px;
+      padding: 36px 32px;
+      box-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.7);
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .auth-card::before {
+      content: '';
+      position: absolute;
+      top: -80px;
+      right: -80px;
+      width: 200px;
+      height: 200px;
+      background: radial-gradient(circle, rgba(99, 102, 241, 0.2) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .auth-header {
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 800;
+      font-size: 1.35rem;
+      letter-spacing: -0.03em;
+      background: linear-gradient(90deg, #818CF8, #C084FC, #F472B6);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 4px;
+    }
+
+    .auth-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .auth-subtitle {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    .google-btn {
+      width: 100%;
+      height: 46px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 12px;
+      color: #FFF;
+      font-size: 0.9rem;
+      font-weight: 600;
+      font-family: inherit;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      text-decoration: none;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .google-btn:hover {
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.3);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    }
+
+    .divider {
+      display: flex;
+      align-items: center;
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .divider::before, .divider::after {
+      content: '';
+      flex: 1;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .divider span {
+      padding: 0 10px;
+    }
+
+    .auth-form {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .form-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    .auth-input {
+      width: 100%;
+      height: 44px;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 11px;
+      color: #FFF;
+      padding: 0 14px;
+      font-size: 0.9rem;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .auth-input:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
+    }
+
+    .submit-btn {
+      width: 100%;
+      height: 44px;
+      background: var(--primary-gradient);
+      border: none;
+      border-radius: 11px;
+      color: #FFF;
+      font-size: 0.92rem;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
+      margin-top: 4px;
+    }
+
+    .submit-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(99, 102, 241, 0.6);
+    }
+
+    .demo-strip {
+      text-align: center;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .demo-btn {
+      background: transparent;
+      border: none;
+      color: #818CF8;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: underline;
+      font-family: inherit;
+      transition: color 0.2s;
+    }
+
+    .demo-btn:hover {
+      color: #C084FC;
+    }
+
+    .features-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 0 4px;
+    }
+
+    .feature-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.8rem;
+      color: var(--text-dim);
+    }
+
+    .feature-icon {
+      color: #34D399;
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="auth-container">
+    <div class="auth-card">
+      <div class="auth-header">
+        <div class="brand-badge">⚡ SyncGM</div>
+        <div class="auth-title">Welcome Back</div>
+        <div class="auth-subtitle">Sign in to manage your bi-directional contact synchronization.</div>
+      </div>
+
+      <!-- Google Sign In Button -->
+      <a href="/api/v1/auth/global/google/login" class="google-btn">
+        <svg width="18" height="18" viewBox="0 0 24 24">
+          <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+          <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+          <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+          <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+        </svg>
+        <span>Sign in with Google</span>
+      </a>
+
+      <div class="divider">
+        <span>or continue with email</span>
+      </div>
+
+      <!-- Email Login Form -->
+      <form class="auth-form" onsubmit="handleEmailLogin(event)">
+        <div class="form-group">
+          <label class="form-label" for="login-email">Work or Personal Email</label>
+          <input 
+            type="email" 
+            id="login-email" 
+            class="auth-input" 
+            placeholder="name@company.com" 
+            required 
+          />
+        </div>
+        <button type="submit" id="login-submit-btn" class="submit-btn">Continue with Email →</button>
+      </form>
+
+      <div class="demo-strip">
+        <button type="button" class="demo-btn" onclick="loginDemoUser()">⚡ Or explore in Demo Guest Mode</button>
+      </div>
+    </div>
+
+    <!-- Features Overview -->
+    <div class="features-list">
+      <div class="feature-item">
+        <span class="feature-icon">✓</span>
+        <span>Automatic hourly sync between Google & Outlook contacts</span>
+      </div>
+      <div class="feature-item">
+        <span class="feature-icon">✓</span>
+        <span>Intelligent change tracking and conflict resolution</span>
+      </div>
+      <div class="feature-item">
+        <span class="feature-icon">✓</span>
+        <span>Secure, isolated database for each user profile</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    async function handleEmailLogin(event) {
+      event.preventDefault();
+      const emailInput = document.getElementById('login-email');
+      const submitBtn = document.getElementById('login-submit-btn');
+      const email = emailInput.value.trim();
+
+      if (!email) return;
+
+      submitBtn.innerText = 'Signing in...';
+      submitBtn.disabled = true;
+
+      try {
+        const res = await fetch('/api/v1/auth/login-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: email })
+        });
+
+        if (res.ok) {
+          window.location.href = '/';
+        } else {
+          const err = await res.json();
+          alert(err.detail || 'Unable to sign in. Please check your email.');
+          submitBtn.innerText = 'Continue with Email →';
+          submitBtn.disabled = false;
+        }
+      } catch (err) {
+        alert('Network error. Please try again.');
+        submitBtn.innerText = 'Continue with Email →';
+        submitBtn.disabled = false;
+      }
+    }
+
+    async function loginDemoUser() {
+      try {
+        const res = await fetch('/api/v1/auth/login-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: 'demo@syncgm.com', name: 'Demo User' })
+        });
+        if (res.ok) {
+          window.location.href = '/';
+        }
+      } catch (err) {
+        window.location.href = '/?user_id=demo_user';
+      }
+    }
+  </script>
+</body>
+</html>
+"""
+    return HTMLResponse(content=html_content)
+
+
 @app.get("/", response_class=HTMLResponse, tags=["Web Interface"])
-def index():
-    """Modern, High-Tech Dashboard with Local Timezone Scheduling & Persistent State."""
+def index(
+    syncgm_session: Optional[str] = Cookie(None),
+    user_id: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """Modern Dashboard with Session Management & Multi-Tenant Provider Connections."""
+    actual_id = user_id or syncgm_session
+    if not actual_id and os.getenv("TESTING") != "true":
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+
     html_content = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -384,10 +932,10 @@ def index():
       gap: 20px;
     }
 
-    /* Top Brand Bar */
+    /* Top Brand & Profile Bar */
     .brand-header {
       display: flex;
-      justify-content: flex-start;
+      justify-content: space-between;
       align-items: center;
       padding: 0 4px;
     }
@@ -401,6 +949,41 @@ def index():
       background: linear-gradient(90deg, #818CF8, #C084FC, #F472B6);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
+    }
+    .user-profile-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .user-pill {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 5px 12px;
+      border-radius: 20px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .logout-btn {
+      font-size: 0.76rem;
+      font-weight: 600;
+      color: #F87171;
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.25);
+      padding: 5px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.2s ease;
+      font-family: inherit;
+    }
+    .logout-btn:hover {
+      background: rgba(239, 68, 68, 0.22);
+      color: #FFFFFF;
+      border-color: #EF4444;
     }
 
     /* Account Providers Strip */
@@ -721,65 +1304,6 @@ def index():
       color: var(--text-muted);
     }
 
-    /* Schedule Details Row (Day & Time Selectors) */
-    .schedule-details-row {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding-top: 6px;
-      border-top: 1px solid rgba(255, 255, 255, 0.05);
-      flex-wrap: wrap;
-    }
-    .picker-group {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 0.82rem;
-      color: var(--text-muted);
-    }
-    .picker-select, .picker-time {
-      background: rgba(15, 23, 42, 0.8);
-      border: 1px solid rgba(255, 255, 255, 0.15);
-      color: #FFF;
-      padding: 6px 10px;
-      border-radius: 8px;
-      font-family: inherit;
-      font-size: 0.82rem;
-      outline: none;
-      transition: border-color 0.2s;
-    }
-    .picker-select:focus, .picker-time:focus {
-      border-color: var(--primary);
-    }
-    .picker-time {
-      font-family: 'JetBrains Mono', monospace;
-      color-scheme: dark;
-    }
-    .tz-label {
-      font-size: 0.72rem;
-      color: var(--text-dim);
-      font-family: 'JetBrains Mono', monospace;
-      background: rgba(255, 255, 255, 0.05);
-      padding: 2px 6px;
-      border-radius: 4px;
-    }
-    .save-schedule-btn {
-      margin-left: auto;
-      background: rgba(99, 102, 241, 0.2);
-      border: 1px solid rgba(99, 102, 241, 0.5);
-      color: #C7D2FE;
-      padding: 6px 14px;
-      border-radius: 8px;
-      font-size: 0.8rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-    .save-schedule-btn:hover {
-      background: var(--primary);
-      color: #FFF;
-    }
-
     /* Conflict Side-by-Side Card */
     .conflict-card {
       background: rgba(245, 158, 11, 0.07);
@@ -879,9 +1403,16 @@ def index():
 </head>
 <body>
   <div class="dashboard">
-    <!-- Brand Header -->
+    <!-- Brand & User Header -->
     <div class="brand-header">
       <div class="logo-badge">⚡ SyncGM</div>
+      <div class="user-profile-bar" id="user-profile-bar">
+        <div class="user-pill">
+          <span>👤</span>
+          <span id="user-email-display">Loading...</span>
+        </div>
+        <button class="logout-btn" onclick="handleLogout()">Log out</button>
+      </div>
     </div>
 
     <!-- Provider Connections -->
@@ -953,7 +1484,7 @@ def index():
   </div>
 
   <script>
-    const USER_ID = "test_user";
+    let activeUserId = "test_user";
     let isGoogleConnected = false;
     let isMsConnected = false;
     let isHourlySyncEnabled = false;
@@ -963,11 +1494,19 @@ def index():
       if (isConn) {
         disconnectProvider(provider);
       } else {
+        const uidParam = activeUserId ? ('?user_id=' + encodeURIComponent(activeUserId)) : '';
         const loginUrl = (provider === 'google') 
-          ? '/api/v1/auth/google/login?user_id=' + USER_ID 
-          : '/api/v1/auth/ms/login?user_id=' + USER_ID;
+          ? '/api/v1/auth/google/login' + uidParam 
+          : '/api/v1/auth/ms/login' + uidParam;
         window.location.href = loginUrl;
       }
+    }
+
+    async function handleLogout() {
+      try {
+        await fetch('/api/v1/auth/logout', { method: 'POST' });
+      } catch (_) {}
+      window.location.href = '/login';
     }
 
     async function disconnectProvider(provider) {
@@ -977,7 +1516,7 @@ def index():
       }
       document.getElementById('agent-msg').innerText = `Disconnecting ${providerName}...`;
       try {
-        const res = await fetch(`/api/v1/auth/disconnect?provider=${provider}&user_id=${USER_ID}`, {
+        const res = await fetch(`/api/v1/auth/disconnect?provider=${provider}&user_id=${encodeURIComponent(activeUserId)}`, {
           method: 'POST'
         });
         const data = await res.json();
@@ -1021,9 +1560,23 @@ def index():
 
     async function loadUserState() {
       try {
-        const res = await fetch('/api/v1/user/state?user_id=' + USER_ID);
-        if (!res.ok) return;
+        const res = await fetch('/api/v1/user/state');
+        if (!res.ok) {
+          if (res.status === 401) {
+            window.location.href = '/login';
+            return;
+          }
+        }
         const state = await res.json();
+
+        if (state.user_id) {
+          activeUserId = state.user_id;
+        }
+
+        const emailDisplay = document.getElementById('user-email-display');
+        if (emailDisplay) {
+          emailDisplay.innerText = state.email || state.display_name || 'Active User';
+        }
 
         isGoogleConnected = !!state.google_connected;
         isMsConnected = !!state.ms_connected;
@@ -1082,7 +1635,7 @@ def index():
         const res = await fetch('/api/v1/agent/action', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ user_id: USER_ID, action: actionName, payload: payload })
+          body: JSON.stringify({ user_id: activeUserId, action: actionName, payload: payload })
         });
         if (!res.ok) {
           const errText = await res.text();
@@ -1134,11 +1687,13 @@ def health_check():
 @app.post("/api/v1/agent/action", response_model=AgentResponse, tags=["ADK Agent"])
 def dispatch_agent_action(
     req: AgentActionRequest,
+    syncgm_session: Optional[str] = Cookie(None),
     db: Session = Depends(get_db),
 ):
+    actual_user_id = req.user_id or syncgm_session or "test_user"
     agent = SyncGMAgent()
     response = agent.handle_action(
-        user_id=req.user_id,
+        user_id=actual_user_id,
         action=req.action,
         payload=req.payload,
         db_session=db,
