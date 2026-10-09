@@ -337,7 +337,7 @@ def index():
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SyncGM | Contact Synchronization Engine</title>
+  <title>SyncGM | Contact Sync</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -873,16 +873,13 @@ def index():
       color: #E2E8F0;
       white-space: pre-wrap;
     }
-
-    /* Footer */
-    .footer { text-align: center; color: var(--text-dim); font-size: 0.75rem; }
   </style>
 </head>
 <body>
   <div class="dashboard">
     <!-- Brand Header -->
     <div class="brand-header">
-      <div class="logo-badge">⚡ SyncGM Engine</div>
+      <div class="logo-badge">⚡ SyncGM</div>
     </div>
 
     <!-- Provider Connections -->
@@ -923,10 +920,10 @@ def index():
           />
           <div class="schedule-checkbox-text">
             <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
-              <span class="schedule-checkbox-title">Enable Auto Sync (Hourly)</span>
+              <span class="schedule-checkbox-title">Automatic Hourly Sync</span>
               <span id="schedule-badge" class="schedule-status-badge">OFF</span>
             </div>
-            <span class="schedule-checkbox-desc">Automatically synchronize contacts across Google and Outlook every hour.</span>
+            <span class="schedule-checkbox-desc">Automatically keep your Google and Outlook contacts up to date every hour.</span>
           </div>
         </label>
       </div>
@@ -935,7 +932,7 @@ def index():
       <div class="action-row">
         <div class="action-row-text">
           <span class="action-row-title">Manual Sync</span>
-          <span class="action-row-desc">Trigger an immediate bidirectional synchronization cycle.</span>
+          <span class="action-row-desc">Sync contacts between your accounts right now.</span>
         </div>
         <button class="sync-btn" onclick="sendAction('sync_now')">
           <span>⚡</span>
@@ -946,15 +943,10 @@ def index():
       <!-- Bottom Output Console -->
       <div class="bottom-console">
         <div class="console-header">
-          <span>🖥️</span>
-          <span>Engine Execution Log</span>
+          <span>Sync Activity</span>
         </div>
-        <div id="agent-msg" class="console-content">Ready. Press 'Sync Now' to inspect and synchronize.</div>
+        <div id="agent-msg" class="console-content">Ready. Click 'Sync Now' to sync your contacts.</div>
       </div>
-    </div>
-
-    <div class="footer">
-      SyncGM • Automatic Bidirectional Timestamp Sync • Google & Microsoft
     </div>
   </div>
 
@@ -981,7 +973,7 @@ def index():
       if (!confirm(`Are you sure you want to disconnect ${providerName}?`)) {
         return;
       }
-      document.getElementById('agent-msg').innerText = `⏳ Disconnecting ${providerName}...`;
+      document.getElementById('agent-msg').innerText = `Disconnecting ${providerName}...`;
       try {
         const res = await fetch(`/api/v1/auth/disconnect?provider=${provider}&user_id=${USER_ID}`, {
           method: 'POST'
@@ -990,7 +982,7 @@ def index():
         document.getElementById('agent-msg').innerText = data.message || `Disconnected ${providerName}.`;
         await loadUserState();
       } catch (err) {
-        document.getElementById('agent-msg').innerText = `⚠️ Error disconnecting ${providerName}: ` + err.message;
+        document.getElementById('agent-msg').innerText = `Unable to disconnect ${providerName}. Please try again.`;
       }
     }
 
@@ -1077,7 +1069,13 @@ def index():
     }
 
     async function sendAction(actionName, payload = {}) {
-      document.getElementById('agent-msg').innerText = '⏳ Executing engine workflow (' + actionName + ')...';
+      if (actionName === 'sync_now') {
+        document.getElementById('agent-msg').innerText = 'Syncing your contacts...';
+      } else if (actionName === 'set_schedule') {
+        document.getElementById('agent-msg').innerText = 'Updating schedule...';
+      } else {
+        document.getElementById('agent-msg').innerText = 'Processing request...';
+      }
       try {
         const res = await fetch('/api/v1/agent/action', {
           method: 'POST',
@@ -1086,11 +1084,11 @@ def index():
         });
         if (!res.ok) {
           const errText = await res.text();
-          let msg = '⚠️ Engine notice: Request completed with status ' + res.status;
+          let msg = 'Unable to complete request (Status ' + res.status + ').';
           try {
             const errJson = JSON.parse(errText);
-            if (errJson.message) msg = '⚠️ ' + errJson.message;
-            else if (errJson.detail) msg = '⚠️ ' + errJson.detail;
+            if (errJson.message) msg = errJson.message;
+            else if (errJson.detail) msg = errJson.detail;
           } catch (_) {}
           document.getElementById('agent-msg').innerText = msg;
           return;
@@ -1098,7 +1096,7 @@ def index():
         const data = await res.json();
         renderResponse(data);
       } catch (err) {
-        document.getElementById('agent-msg').innerText = '⚠️ Sync in progress or network notice: ' + err.message;
+        document.getElementById('agent-msg').innerText = 'Unable to complete request. Please try again.';
       }
     }
 
