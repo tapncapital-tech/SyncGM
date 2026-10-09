@@ -132,3 +132,29 @@ def test_audit_logging(db_session: Session) -> None:
     assert len(logs) == 1
     assert logs[0].trigger_type == "SCHEDULED"
     assert logs[0].contacts_examined == 150
+
+
+def test_disconnect_provider(db_session: Session) -> None:
+    repo = SyncRepository(db_session)
+    user = repo.get_or_create_user(
+        email="disconnect_test@example.com",
+        google_refresh_token="google_token_abc",
+        ms_refresh_token="ms_token_xyz",
+    )
+
+    g_tok, m_tok = repo.get_decrypted_tokens(user)
+    assert g_tok == "google_token_abc"
+    assert m_tok == "ms_token_xyz"
+
+    # Disconnect Google
+    repo.disconnect_provider(user.id, "google")
+    g_tok, m_tok = repo.get_decrypted_tokens(user)
+    assert g_tok is None
+    assert m_tok == "ms_token_xyz"
+
+    # Disconnect Microsoft
+    repo.disconnect_provider(user.id, "ms")
+    g_tok, m_tok = repo.get_decrypted_tokens(user)
+    assert g_tok is None
+    assert m_tok is None
+

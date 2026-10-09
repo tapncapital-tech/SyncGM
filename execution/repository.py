@@ -86,6 +86,20 @@ class SyncRepository:
             user.ms_refresh_token_enc = encrypt_token(ms_refresh_token)
         self.session.commit()
 
+    def disconnect_provider(self, user_id: str, provider: str) -> UserAccount:
+        """Clears the encrypted OAuth refresh token for the given provider."""
+        user = self.get_user(user_id)
+        if not user:
+            raise ValueError(f"User '{user_id}' not found.")
+        norm_provider = provider.lower().strip()
+        if norm_provider in ("google", "gmail"):
+            user.google_refresh_token_enc = None
+        elif norm_provider in ("ms", "microsoft", "outlook"):
+            user.ms_refresh_token_enc = None
+        self.session.commit()
+        self.session.refresh(user)
+        return user
+
     def update_user_policy(
         self,
         user_id: str,

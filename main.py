@@ -262,6 +262,27 @@ def ms_oauth_callback(
     return response
 
 
+@app.post("/api/v1/auth/disconnect", tags=["Authentication"])
+def disconnect_provider_auth(
+    provider: str = Query(..., pattern="^(google|microsoft|ms)$"),
+    user_id: Optional[str] = Query(None),
+    syncgm_session: Optional[str] = Cookie(None),
+    db: Session = Depends(get_db),
+):
+    actual_id = user_id or syncgm_session or "test_user"
+    repo = SyncRepository(db)
+    user = repo.disconnect_provider(actual_id, provider)
+    provider_name = "Google Contacts" if provider.lower() in ("google", "gmail") else "Outlook Contacts"
+    return {
+        "status": "SUCCESS",
+        "message": f"Successfully disconnected {provider_name}.",
+        "provider": provider,
+        "google_connected": user.google_refresh_token_enc is not None,
+        "ms_connected": user.ms_refresh_token_enc is not None,
+    }
+
+
+
 # =============================================================================
 # USER STATE & SESSION PERSISTENCE ENDPOINT
 # =============================================================================
@@ -447,17 +468,50 @@ def index():
     .provider-status.disconnected { color: var(--text-dim); }
 
     .link-btn {
-      padding: 6px 12px;
-      border-radius: 8px;
-      font-size: 0.78rem;
+      min-width: 104px;
+      height: 36px;
+      padding: 0 16px;
+      border-radius: 9px;
+      font-size: 0.82rem;
       font-weight: 600;
       text-decoration: none;
-      transition: all 0.2s;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      border: 1px solid transparent;
+      outline: none;
+      font-family: inherit;
+      box-sizing: border-box;
     }
-    .link-g { background: rgba(234, 67, 53, 0.15); border: 1px solid rgba(234, 67, 53, 0.3); color: #FCA5A5; }
-    .link-g:hover { background: #EA4335; color: #FFF; }
-    .link-ms { background: rgba(0, 120, 212, 0.15); border: 1px solid rgba(0, 120, 212, 0.3); color: #93C5FD; }
-    .link-ms:hover { background: #0078D4; color: #FFF; }
+    .link-btn.btn-connect {
+      background: rgba(99, 102, 241, 0.15);
+      border: 1px solid rgba(99, 102, 241, 0.4);
+      color: #C7D2FE;
+    }
+    .link-btn.btn-connect:hover {
+      background: #4F46E5;
+      border-color: #6366F1;
+      color: #FFFFFF;
+      box-shadow: 0 0 16px rgba(99, 102, 241, 0.5);
+      transform: translateY(-1px);
+    }
+    .link-btn.btn-disconnect {
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.35);
+      color: #FCA5A5;
+    }
+    .link-btn.btn-disconnect:hover {
+      background: rgba(239, 68, 68, 0.25);
+      border-color: #EF4444;
+      color: #FFFFFF;
+      box-shadow: 0 0 16px rgba(239, 68, 68, 0.45);
+      transform: translateY(-1px);
+    }
+    .link-btn:active {
+      transform: translateY(0) scale(0.98);
+    }
 
     /* Main Command Hero Card */
     .hero-card {
@@ -485,39 +539,73 @@ def index():
       pointer-events: none;
     }
 
-    /* Primary Action Row */
+    /* Action Row */
     .action-row {
       display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 16px;
+      padding: 14px 18px;
+    }
+    @media (max-width: 500px) {
+      .action-row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+      }
+      .sync-btn {
+        width: 100%;
+        justify-content: center;
+      }
+    }
+    .action-row-text {
+      display: flex;
       flex-direction: column;
-      gap: 14px;
-      width: 100%;
+      gap: 3px;
+    }
+    .action-row-title {
+      font-size: 0.92rem;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+    .action-row-desc {
+      font-size: 0.78rem;
+      color: var(--text-muted);
     }
 
-    /* Primary Sync Button */
-    .sync-btn-hero {
+    /* Normal-Sized Sync Button */
+    .sync-btn {
       background: var(--primary-gradient);
       color: #FFFFFF;
       border: none;
-      padding: 18px 22px;
-      border-radius: 16px;
-      font-size: 1.15rem;
-      font-weight: 800;
+      padding: 10px 20px;
+      border-radius: 10px;
+      font-size: 0.88rem;
+      font-weight: 600;
       letter-spacing: -0.01em;
       cursor: pointer;
-      display: flex;
+      display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 10px;
-      box-shadow: 0 12px 30px -4px rgba(99, 102, 241, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.3);
-      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-      position: relative;
-      width: 100%;
+      gap: 8px;
+      box-shadow: 0 4px 14px -2px rgba(99, 102, 241, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.3);
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      outline: none;
+      font-family: inherit;
+      white-space: nowrap;
+      flex-shrink: 0;
     }
-    .sync-btn-hero:hover {
-      transform: translateY(-2px) scale(1.01);
-      box-shadow: 0 18px 40px -4px rgba(99, 102, 241, 0.7), inset 0 1px 1px rgba(255, 255, 255, 0.5);
+    .sync-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px -2px rgba(99, 102, 241, 0.7), inset 0 1px 1px rgba(255, 255, 255, 0.5);
     }
-    .sync-btn-hero:active { transform: translateY(0) scale(0.99); }
+    .sync-btn:active {
+      transform: translateY(0);
+      box-shadow: 0 2px 8px -2px rgba(99, 102, 241, 0.4);
+    }
 
     /* Schedule Configuration Segmented Control */
     .schedule-section {
@@ -528,6 +616,12 @@ def index():
       border: 1px solid rgba(255, 255, 255, 0.05);
       border-radius: 16px;
       padding: 16px 18px;
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .schedule-section.active-glow {
+      border-color: rgba(16, 185, 129, 0.4);
+      background: rgba(16, 185, 129, 0.04);
+      box-shadow: 0 0 25px -4px rgba(16, 185, 129, 0.2);
     }
     .schedule-header {
       display: flex;
@@ -547,54 +641,82 @@ def index():
     .schedule-status-badge {
       font-size: 0.78rem;
       font-weight: 700;
-      color: var(--accent-cyan);
-      font-family: 'JetBrains Mono', monospace;
-      background: rgba(6, 182, 212, 0.1);
-      border: 1px solid rgba(6, 182, 212, 0.25);
-      padding: 3px 8px;
-      border-radius: 6px;
-    }
-
-    .pills-group {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 6px;
-      background: rgba(255, 255, 255, 0.03);
-      padding: 4px;
-      border-radius: 12px;
-      border: 1px solid rgba(255, 255, 255, 0.04);
-    }
-    @media (max-width: 500px) { .pills-group { grid-template-columns: repeat(2, 1fr); } }
-
-    .pills-group-5 {
-      display: grid;
-      grid-template-columns: repeat(5, 1fr);
-      gap: 6px;
-      background: rgba(255, 255, 255, 0.03);
-      padding: 4px;
-      border-radius: 12px;
-      border: 1px solid rgba(255, 255, 255, 0.04);
-    }
-    @media (max-width: 650px) { .pills-group-5 { grid-template-columns: repeat(3, 1fr); } }
-    @media (max-width: 450px) { .pills-group-5 { grid-template-columns: repeat(2, 1fr); } }
-
-    .pill-btn {
-      background: transparent;
-      border: none;
       color: var(--text-dim);
-      padding: 8px 12px;
-      border-radius: 8px;
-      font-size: 0.8rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.2s ease;
-      text-align: center;
+      font-family: 'JetBrains Mono', monospace;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 3px 10px;
+      border-radius: 6px;
+      transition: all 0.3s ease;
     }
-    .pill-btn:hover { color: var(--text-main); background: rgba(255, 255, 255, 0.05); }
-    .pill-btn.active {
-      background: var(--primary);
-      color: #FFF;
-      box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
+    .schedule-status-badge.active {
+      color: #34D399;
+      background: rgba(16, 185, 129, 0.15);
+      border-color: rgba(16, 185, 129, 0.45);
+      box-shadow: 0 0 14px rgba(16, 185, 129, 0.35);
+    }
+
+    .schedule-checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      cursor: pointer;
+      user-select: none;
+      background: rgba(255, 255, 255, 0.03);
+      padding: 12px 16px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .schedule-checkbox-label:hover {
+      background: rgba(255, 255, 255, 0.06);
+      border-color: rgba(255, 255, 255, 0.15);
+    }
+    .schedule-checkbox-input {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 22px;
+      height: 22px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-radius: 6px;
+      background: rgba(15, 23, 42, 0.8);
+      cursor: pointer;
+      display: grid;
+      place-content: center;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      flex-shrink: 0;
+      margin: 0;
+    }
+    .schedule-checkbox-input:hover {
+      border-color: rgba(52, 211, 153, 0.7);
+    }
+    .schedule-checkbox-input:checked {
+      background: linear-gradient(135deg, #10B981, #059669);
+      border-color: #34D399;
+      box-shadow: 0 0 14px rgba(16, 185, 129, 0.5);
+    }
+    .schedule-checkbox-input:checked::before {
+      content: "";
+      width: 5px;
+      height: 10px;
+      border: solid #FFFFFF;
+      border-width: 0 2.5px 2.5px 0;
+      transform: rotate(45deg) translate(-1px, -1px);
+    }
+    .schedule-checkbox-text {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      width: 100%;
+    }
+    .schedule-checkbox-title {
+      font-size: 0.92rem;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+    .schedule-checkbox-desc {
+      font-size: 0.78rem;
+      color: var(--text-muted);
     }
 
     /* Schedule Details Row (Day & Time Selectors) */
@@ -773,7 +895,7 @@ def index():
             <div id="google-status" class="provider-status">● Checking...</div>
           </div>
         </div>
-        <a id="google-link" class="link-btn link-g" href="/api/v1/auth/google/login?user_id=test_user">Connect</a>
+        <button id="google-btn" class="link-btn btn-connect" onclick="handleProviderAction('google')">Connect</button>
       </div>
 
       <div class="provider-card">
@@ -784,7 +906,7 @@ def index():
             <div id="ms-status" class="provider-status">● Checking...</div>
           </div>
         </div>
-        <a id="ms-link" class="link-btn link-ms" href="/api/v1/auth/ms/login?user_id=test_user">Connect</a>
+        <button id="ms-btn" class="link-btn btn-connect" onclick="handleProviderAction('ms')">Connect</button>
       </div>
     </div>
 
@@ -792,19 +914,30 @@ def index():
     <div class="hero-card">
       <!-- Automated Hourly Sync Toggle -->
       <div class="schedule-section">
-        <div class="schedule-header">
-          <div class="schedule-title">⏱️ Automatic Hourly Sync</div>
-          <div id="schedule-badge" class="schedule-status-badge">OFF</div>
-        </div>
-        <div class="pills-group">
-          <button id="pill-hourly" class="pill-btn" onclick="toggleHourlySync(true)">Enabled (Every Hour)</button>
-          <button id="pill-disabled" class="pill-btn active" onclick="toggleHourlySync(false)">Disabled (Manual Only)</button>
-        </div>
+        <label class="schedule-checkbox-label" for="auto-sync-checkbox">
+          <input 
+            type="checkbox" 
+            id="auto-sync-checkbox" 
+            class="schedule-checkbox-input" 
+            onchange="toggleHourlySync(this.checked)" 
+          />
+          <div class="schedule-checkbox-text">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+              <span class="schedule-checkbox-title">Enable Auto Sync (Hourly)</span>
+              <span id="schedule-badge" class="schedule-status-badge">OFF</span>
+            </div>
+            <span class="schedule-checkbox-desc">Automatically synchronize contacts across Google and Outlook every hour.</span>
+          </div>
+        </label>
       </div>
 
       <!-- Main Action: Sync Now -->
       <div class="action-row">
-        <button class="sync-btn-hero" onclick="sendAction('sync_now')">
+        <div class="action-row-text">
+          <span class="action-row-title">Manual Sync</span>
+          <span class="action-row-desc">Trigger an immediate bidirectional synchronization cycle.</span>
+        </div>
+        <button class="sync-btn" onclick="sendAction('sync_now')">
           <span>⚡</span>
           <span>Sync Now</span>
         </button>
@@ -827,37 +960,57 @@ def index():
 
   <script>
     const USER_ID = "test_user";
-    let currentFrequency = "disabled";
+    let isGoogleConnected = false;
+    let isMsConnected = false;
+    let isHourlySyncEnabled = false;
 
-    // Detect user's local timezone
-    function getLocalTimeZoneAbbr() {
-      try {
-        const d = new Date();
-        const str = d.toLocaleTimeString('en-us', { timeZoneName: 'short' });
-        const parts = str.split(' ');
-        return parts[parts.length - 1] || 'LOCAL';
-      } catch (_) {
-        return 'LOCAL';
+    function handleProviderAction(provider) {
+      const isConn = (provider === 'google') ? isGoogleConnected : isMsConnected;
+      if (isConn) {
+        disconnectProvider(provider);
+      } else {
+        const loginUrl = (provider === 'google') 
+          ? '/api/v1/auth/google/login?user_id=' + USER_ID 
+          : '/api/v1/auth/ms/login?user_id=' + USER_ID;
+        window.location.href = loginUrl;
       }
     }
 
-    let isHourlySyncEnabled = false;
+    async function disconnectProvider(provider) {
+      const providerName = (provider === 'google') ? 'Google Contacts' : 'Outlook Contacts';
+      if (!confirm(`Are you sure you want to disconnect ${providerName}?`)) {
+        return;
+      }
+      document.getElementById('agent-msg').innerText = `⏳ Disconnecting ${providerName}...`;
+      try {
+        const res = await fetch(`/api/v1/auth/disconnect?provider=${provider}&user_id=${USER_ID}`, {
+          method: 'POST'
+        });
+        const data = await res.json();
+        document.getElementById('agent-msg').innerText = data.message || `Disconnected ${providerName}.`;
+        await loadUserState();
+      } catch (err) {
+        document.getElementById('agent-msg').innerText = `⚠️ Error disconnecting ${providerName}: ` + err.message;
+      }
+    }
 
     function updateScheduleBadge() {
       const badge = document.getElementById('schedule-badge');
-      const hourlyBtn = document.getElementById('pill-hourly');
-      const offBtn = document.getElementById('pill-disabled');
+      const section = document.querySelector('.schedule-section');
+      const checkbox = document.getElementById('auto-sync-checkbox');
+
+      if (checkbox) {
+        checkbox.checked = isHourlySyncEnabled;
+      }
 
       if (isHourlySyncEnabled) {
         badge.innerText = 'ON (HOURLY)';
         badge.className = 'schedule-status-badge active';
-        if (hourlyBtn) hourlyBtn.classList.add('active');
-        if (offBtn) offBtn.classList.remove('active');
+        if (section) section.classList.add('active-glow');
       } else {
         badge.innerText = 'OFF';
         badge.className = 'schedule-status-badge';
-        if (hourlyBtn) hourlyBtn.classList.remove('active');
-        if (offBtn) offBtn.classList.add('active');
+        if (section) section.classList.remove('active-glow');
       }
     }
 
@@ -878,29 +1031,37 @@ def index():
         if (!res.ok) return;
         const state = await res.json();
 
-        // Update provider connection statuses
+        isGoogleConnected = !!state.google_connected;
+        isMsConnected = !!state.ms_connected;
+
+        // Update Google provider connection status and button
         const gStatus = document.getElementById('google-status');
-        const gLink = document.getElementById('google-link');
-        if (state.google_connected) {
+        const gBtn = document.getElementById('google-btn');
+        if (isGoogleConnected) {
           gStatus.innerText = '● Connected';
           gStatus.className = 'provider-status';
-          gLink.innerText = 'Reconnect';
+          gBtn.innerText = 'Disconnect';
+          gBtn.className = 'link-btn btn-disconnect';
         } else {
           gStatus.innerText = '○ Not Connected';
           gStatus.className = 'provider-status disconnected';
-          gLink.innerText = 'Connect';
+          gBtn.innerText = 'Connect';
+          gBtn.className = 'link-btn btn-connect';
         }
 
+        // Update Microsoft provider connection status and button
         const msStatus = document.getElementById('ms-status');
-        const msLink = document.getElementById('ms-link');
-        if (state.ms_connected) {
+        const msBtn = document.getElementById('ms-btn');
+        if (isMsConnected) {
           msStatus.innerText = '● Connected';
           msStatus.className = 'provider-status';
-          msLink.innerText = 'Reconnect';
+          msBtn.innerText = 'Disconnect';
+          msBtn.className = 'link-btn btn-disconnect';
         } else {
           msStatus.innerText = '○ Not Connected';
           msStatus.className = 'provider-status disconnected';
-          msLink.innerText = 'Connect';
+          msBtn.innerText = 'Connect';
+          msBtn.className = 'link-btn btn-connect';
         }
 
         // Restore hourly schedule status
