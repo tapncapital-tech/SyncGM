@@ -37,15 +37,17 @@ logger = logging.getLogger("syncgm.api")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Initializing SyncGM Database and Resources...")
-    init_db()
-
-    user_id = "test_user"
-    GLOBAL_SYNC_STORE.ensure_user(user_id, display_name="Sylvester & Friend")
-    with SessionFactory() as db:
-        from sqlalchemy import update
-        from execution.database import UserAccount
-        db.execute(update(UserAccount).where(UserAccount.sync_policy == "ask").values(sync_policy="last_writer_wins"))
-        db.commit()
+    try:
+        init_db()
+        user_id = "test_user"
+        GLOBAL_SYNC_STORE.ensure_user(user_id, display_name="Sylvester & Friend")
+        with SessionFactory() as db:
+            from sqlalchemy import update
+            from execution.database import UserAccount
+            db.execute(update(UserAccount).where(UserAccount.sync_policy == "ask").values(sync_policy="last_writer_wins"))
+            db.commit()
+    except Exception as exc:
+        logger.warning(f"Database initialization warning on startup: {exc}")
 
     base = UnifiedContact(
         google_resource_name="people/c_demo_101",

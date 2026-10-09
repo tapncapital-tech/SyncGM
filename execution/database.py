@@ -129,8 +129,9 @@ def get_database_url() -> str:
 
 def create_db_engine(database_url: Optional[str] = None):
     url = database_url or get_database_url()
-    connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
-    return create_engine(url, connect_args=connect_args, echo=False)
+    if url.startswith("sqlite"):
+        return create_engine(url, connect_args={"check_same_thread": False}, echo=False)
+    return create_engine(url, pool_pre_ping=True, pool_recycle=300, echo=False)
 
 
 GLOBAL_ENGINE = create_db_engine()
