@@ -1008,9 +1008,7 @@ def login_page(
         e.stopPropagation();
 
         let targetUrl = window.location.origin + '/login';
-        if (btn.tagName === 'A' && btn.href && !btn.href.startsWith('javascript:')) {
-          targetUrl = btn.href;
-        } else if (btn.id === 'tab-register') {
+        if (btn.id === 'tab-register') {
           targetUrl = window.location.origin + '/login?mode=register';
         }
 
@@ -1954,10 +1952,7 @@ def index(
         e.preventDefault();
         e.stopPropagation();
 
-        const targetUrl = (btn.tagName === 'A' && btn.href && !btn.href.startsWith('javascript:'))
-          ? btn.href
-          : window.location.origin + '/';
-
+        const targetUrl = window.location.origin + '/';
         window.open(targetUrl, '_blank');
       }, true);
     }
