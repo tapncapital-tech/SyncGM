@@ -824,6 +824,12 @@ def login_page(
       text-align: center;
       padding-top: 8px;
       border-top: 1px solid rgba(255, 255, 255, 0.05);
+      font-size: 0.82rem;
+    }
+
+    .demo-label {
+      color: var(--text-dim);
+      font-size: 0.82rem;
     }
 
     .demo-btn {
@@ -962,7 +968,7 @@ def login_page(
       </form>
 
       <div class="demo-strip">
-        <button type="button" class="demo-btn" onclick="loginDemoUser()">⚡ Or explore in Demo Guest Mode</button>
+        <span class="demo-label">demo by: </span><a href="https://agentworkforce.online" target="_blank" rel="noopener noreferrer" class="demo-btn">agentworkforce.online</a>
       </div>
     </div>
 
