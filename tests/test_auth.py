@@ -94,3 +94,48 @@ def test_logout(client: TestClient):
     logout_resp = client.get("/api/v1/auth/logout", follow_redirects=False)
     assert logout_resp.status_code == 303
     assert logout_resp.headers["location"] == "/login"
+
+
+def test_register_and_password_login(client: TestClient):
+    test_email = "sarah.lead@enterprise.com"
+    test_password = "SecretPassword123!"
+
+    # 1. Register new account
+    reg_resp = client.post(
+        "/api/v1/auth/register",
+        json={"email": test_email, "password": test_password, "name": "Sarah Lead"},
+    )
+    assert reg_resp.status_code == 200
+    reg_data = reg_resp.json()
+    assert reg_data["status"] == "SUCCESS"
+    assert reg_data["email"] == test_email
+    assert reg_data["display_name"] == "Sarah Lead"
+    assert "syncgm_session" in reg_resp.cookies
+
+    # 2. Duplicate registration should fail
+    dup_resp = client.post(
+        "/api/v1/auth/register",
+        json={"email": test_email, "password": "AnotherPassword", "name": "Sarah"},
+    )
+    assert dup_resp.status_code == 400
+    assert "already exists" in dup_resp.json()["detail"]
+
+    # 3. Login with wrong password should fail
+    bad_login = client.post(
+        "/api/v1/auth/login",
+        json={"email": test_email, "password": "WrongPassword"},
+    )
+    assert bad_login.status_code == 401
+    assert "Invalid email or password" in bad_login.json()["detail"]
+
+    # 4. Login with correct password should succeed
+    good_login = client.post(
+        "/api/v1/auth/login",
+        json={"email": test_email, "password": test_password},
+    )
+    assert good_login.status_code == 200
+    good_data = good_login.json()
+    assert good_data["status"] == "SUCCESS"
+    assert good_data["email"] == test_email
+    assert "syncgm_session" in good_login.cookies
+

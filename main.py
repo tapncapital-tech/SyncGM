@@ -107,8 +107,15 @@ def get_db():
 # REQUEST / RESPONSE SCHEMAS
 # =============================================================================
 
+class EmailRegisterRequest(BaseModel):
+    email: str = Field(description="User's email address")
+    password: str = Field(description="User's password (min 6 chars)")
+    name: Optional[str] = Field(default=None, description="Optional full name or display name")
+
+
 class EmailLoginRequest(BaseModel):
     email: str = Field(description="User's email address")
+    password: str = Field(default="", description="User's account password")
     name: Optional[str] = Field(default=None, description="Optional user name")
 
 
@@ -154,23 +161,70 @@ def verify_scheduler_auth(
 
 
 # =============================================================================
-# GLOBAL USER AUTHENTICATION ENDPOINTS
+# GLOBAL USER AUTHENTICATION ENDPOINTS (SIGN IN / REGISTER)
 # =============================================================================
 
+@app.post("/api/v1/auth/register", tags=["Global Authentication"])
+def register_account(
+    req: EmailRegisterRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    clean_email = req.email.strip().lower()
+    if "@" not in clean_email or "." not in clean_email:
+        raise HTTPException(status_code=400, detail="Please enter a valid email address.")
+    if len(req.password.strip()) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters.")
+    
+    display_name = req.name.strip() if req.name else clean_email.split("@")[0].capitalize()
+    repo = SyncRepository(db)
+    try:
+        user = repo.register_user(email=clean_email, password=req.password, display_name=display_name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+    response.set_cookie(
+        key="syncgm_session",
+        value=user.id,
+        max_age=30 * 86400,
+        path="/",
+        samesite="lax",
+    )
+    return {
+        "status": "SUCCESS",
+        "user_id": user.id,
+        "email": user.email,
+        "display_name": user.display_name,
+    }
+
+
+@app.post("/api/v1/auth/login", tags=["Global Authentication"])
 @app.post("/api/v1/auth/login-email", tags=["Global Authentication"])
-def email_login(
+def login_account(
     req: EmailLoginRequest,
     response: Response,
     db: Session = Depends(get_db),
 ):
-    email_clean = req.email.strip().lower()
-    if "@" not in email_clean or "." not in email_clean:
+    clean_email = req.email.strip().lower()
+    if "@" not in clean_email or "." not in clean_email:
         raise HTTPException(status_code=400, detail="Please enter a valid email address.")
     
-    display_name = req.name.strip() if req.name else email_clean.split("@")[0].capitalize()
     repo = SyncRepository(db)
-    user = repo.get_or_create_user(email=email_clean, display_name=display_name)
     
+    # If password is provided, authenticate against hash
+    if req.password:
+        user = repo.authenticate_user(email=clean_email, password=req.password)
+        if not user:
+            existing = repo.get_user(clean_email)
+            if existing and not existing.password_hash:
+                user = repo.register_user(email=clean_email, password=req.password)
+            else:
+                raise HTTPException(status_code=401, detail="Invalid email or password.")
+    else:
+        # Fallback for passwordless test/demo environments
+        display_name = req.name.strip() if req.name else clean_email.split("@")[0].capitalize()
+        user = repo.get_or_create_user(email=clean_email, display_name=display_name)
+
     response.set_cookie(
         key="syncgm_session",
         value=user.id,
@@ -548,6 +602,53 @@ def login_page(
       padding: 32px 16px;
     }
 
+    .auth-tabs {
+      display: flex;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 4px;
+      gap: 4px;
+      margin-bottom: 6px;
+    }
+
+    .auth-tab {
+      flex: 1;
+      padding: 10px 14px;
+      background: transparent;
+      border: none;
+      border-radius: 9px;
+      color: var(--text-muted);
+      font-size: 0.88rem;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: center;
+    }
+
+    .auth-tab.active {
+      background: rgba(255, 255, 255, 0.12);
+      color: #FFF;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    }
+
+    .auth-error-banner {
+      display: none;
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      color: #FCA5A5;
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-size: 0.84rem;
+      line-height: 1.4;
+      text-align: left;
+    }
+
+    .auth-error-banner.visible {
+      display: block;
+    }
+
     .auth-container {
       width: 100%;
       max-width: 440px;
@@ -566,7 +667,7 @@ def login_page(
       box-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.7);
       display: flex;
       flex-direction: column;
-      gap: 24px;
+      gap: 20px;
       position: relative;
       overflow: hidden;
     }
@@ -767,9 +868,18 @@ def login_page(
     <div class="auth-card">
       <div class="auth-header">
         <div class="brand-badge">⚡ SyncGM</div>
-        <div class="auth-title">Welcome Back</div>
-        <div class="auth-subtitle">Sign in to manage your bi-directional contact synchronization.</div>
+        <div class="auth-title" id="auth-title-text">Welcome Back</div>
+        <div class="auth-subtitle" id="auth-subtitle-text">Sign in to manage your bi-directional contact synchronization.</div>
       </div>
+
+      <!-- Segmented Tab Switcher -->
+      <div class="auth-tabs">
+        <button type="button" id="tab-login" class="auth-tab active" onclick="switchAuthTab('login')">Sign In</button>
+        <button type="button" id="tab-register" class="auth-tab" onclick="switchAuthTab('register')">Create Account</button>
+      </div>
+
+      <!-- Error Message Banner -->
+      <div id="auth-error" class="auth-error-banner"></div>
 
       <!-- Google Sign In Button -->
       <a href="/api/v1/auth/global/google/login" class="google-btn">
@@ -779,26 +889,76 @@ def login_page(
           <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
           <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
         </svg>
-        <span>Sign in with Google</span>
+        <span id="google-btn-text">Sign in with Google</span>
       </a>
 
       <div class="divider">
-        <span>or continue with email</span>
+        <span id="divider-text">or continue with email</span>
       </div>
 
-      <!-- Email Login Form -->
-      <form class="auth-form" onsubmit="handleEmailLogin(event)">
+      <!-- Sign In Form -->
+      <form id="form-login" class="auth-form" onsubmit="handleAuthSubmit(event, 'login')">
         <div class="form-group">
-          <label class="form-label" for="login-email">Work or Personal Email</label>
+          <label class="form-label" for="login-email">Email Address</label>
           <input 
             type="email" 
             id="login-email" 
             class="auth-input" 
             placeholder="name@company.com" 
+            autocomplete="email"
             required 
           />
         </div>
-        <button type="submit" id="login-submit-btn" class="submit-btn">Continue with Email →</button>
+        <div class="form-group">
+          <label class="form-label" for="login-password">Password</label>
+          <input 
+            type="password" 
+            id="login-password" 
+            class="auth-input" 
+            placeholder="••••••••" 
+            autocomplete="current-password"
+            required 
+          />
+        </div>
+        <button type="submit" id="btn-login-submit" class="submit-btn">Sign In →</button>
+      </form>
+
+      <!-- Create Account Form -->
+      <form id="form-register" class="auth-form" style="display: none;" onsubmit="handleAuthSubmit(event, 'register')">
+        <div class="form-group">
+          <label class="form-label" for="register-name">Full Name</label>
+          <input 
+            type="text" 
+            id="register-name" 
+            class="auth-input" 
+            placeholder="Jane Doe" 
+            autocomplete="name"
+          />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="register-email">Email Address</label>
+          <input 
+            type="email" 
+            id="register-email" 
+            class="auth-input" 
+            placeholder="name@company.com" 
+            autocomplete="email"
+            required 
+          />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="register-password">Password</label>
+          <input 
+            type="password" 
+            id="register-password" 
+            class="auth-input" 
+            placeholder="Min. 6 characters" 
+            minlength="6"
+            autocomplete="new-password"
+            required 
+          />
+        </div>
+        <button type="submit" id="btn-register-submit" class="submit-btn">Create Account →</button>
       </form>
 
       <div class="demo-strip">
@@ -824,35 +984,102 @@ def login_page(
   </div>
 
   <script>
-    async function handleEmailLogin(event) {
+    let activeMode = 'login';
+
+    function switchAuthTab(mode) {
+      activeMode = mode;
+      const tabLogin = document.getElementById('tab-login');
+      const tabRegister = document.getElementById('tab-register');
+      const formLogin = document.getElementById('form-login');
+      const formRegister = document.getElementById('form-register');
+      const titleText = document.getElementById('auth-title-text');
+      const subtitleText = document.getElementById('auth-subtitle-text');
+      const googleBtnText = document.getElementById('google-btn-text');
+      const errorBanner = document.getElementById('auth-error');
+
+      errorBanner.classList.remove('visible');
+      errorBanner.innerText = '';
+
+      if (mode === 'login') {
+        tabLogin.classList.add('active');
+        tabRegister.classList.remove('active');
+        formLogin.style.display = 'flex';
+        formRegister.style.display = 'none';
+        titleText.innerText = 'Welcome Back';
+        subtitleText.innerText = 'Sign in to manage your bi-directional contact synchronization.';
+        googleBtnText.innerText = 'Sign in with Google';
+      } else {
+        tabRegister.classList.add('active');
+        tabLogin.classList.remove('active');
+        formRegister.style.display = 'flex';
+        formLogin.style.display = 'none';
+        titleText.innerText = 'Create an Account';
+        subtitleText.innerText = 'Start syncing your Google & Microsoft contacts securely.';
+        googleBtnText.innerText = 'Sign up with Google';
+      }
+    }
+
+    async function handleAuthSubmit(event, mode) {
       event.preventDefault();
-      const emailInput = document.getElementById('login-email');
-      const submitBtn = document.getElementById('login-submit-btn');
-      const email = emailInput.value.trim();
+      const errorBanner = document.getElementById('auth-error');
+      errorBanner.classList.remove('visible');
+      errorBanner.innerText = '';
 
-      if (!email) return;
+      let url = '/api/v1/auth/login';
+      let payload = {};
+      let submitBtn = null;
 
-      submitBtn.innerText = 'Signing in...';
+      if (mode === 'login') {
+        submitBtn = document.getElementById('btn-login-submit');
+        const email = document.getElementById('login-email').value.trim();
+        const password = document.getElementById('login-password').value;
+        if (!email || !password) return;
+        payload = { email, password };
+      } else {
+        url = '/api/v1/auth/register';
+        submitBtn = document.getElementById('btn-register-submit');
+        const name = document.getElementById('register-name').value.trim();
+        const email = document.getElementById('register-email').value.trim();
+        const password = document.getElementById('register-password').value;
+        if (!email || !password) return;
+        if (password.length < 6) {
+          errorBanner.innerText = 'Password must be at least 6 characters long.';
+          errorBanner.classList.add('visible');
+          return;
+        }
+        payload = { name, email, password };
+      }
+
+      const originalBtnText = submitBtn.innerText;
+      submitBtn.innerText = 'Please wait...';
       submitBtn.disabled = true;
 
       try {
-        const res = await fetch('/api/v1/auth/login-email', {
+        const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: email })
+          body: JSON.stringify(payload)
         });
 
         if (res.ok) {
           window.location.href = '/';
         } else {
-          const err = await res.json();
-          alert(err.detail || 'Unable to sign in. Please check your email.');
-          submitBtn.innerText = 'Continue with Email →';
+          let errorMsg = 'Authentication failed. Please check your credentials.';
+          try {
+            const err = await res.json();
+            errorMsg = err.detail || errorMsg;
+          } catch (_) {
+            errorMsg = `Server error (${res.status}). Please try again shortly.`;
+          }
+          errorBanner.innerText = errorMsg;
+          errorBanner.classList.add('visible');
+          submitBtn.innerText = originalBtnText;
           submitBtn.disabled = false;
         }
       } catch (err) {
-        alert('Network error. Please try again.');
-        submitBtn.innerText = 'Continue with Email →';
+        errorBanner.innerText = 'Unable to reach the server. Please check your internet connection.';
+        errorBanner.classList.add('visible');
+        submitBtn.innerText = originalBtnText;
         submitBtn.disabled = false;
       }
     }

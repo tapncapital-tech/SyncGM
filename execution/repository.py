@@ -7,7 +7,7 @@ from typing import Any, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from execution.crypto import decrypt_token, encrypt_token
+from execution.crypto import decrypt_token, encrypt_token, hash_password, verify_password
 from execution.database import (
     ContactMapping,
     SyncAuditLog,
@@ -27,6 +27,45 @@ class SyncRepository:
     # -------------------------------------------------------------------------
     # User Account Operations
     # -------------------------------------------------------------------------
+    def register_user(
+        self,
+        email: str,
+        password: str,
+        display_name: str = "User",
+    ) -> UserAccount:
+        """Registers a new user account with a secure password hash."""
+        clean_email = email.lower().strip()
+        existing = self.get_user(clean_email)
+        if existing:
+            if existing.password_hash:
+                raise ValueError("An account with this email already exists. Please sign in.")
+            # If user existed from prototype or OAuth without password, attach password hash
+            existing.password_hash = hash_password(password)
+            if display_name and display_name != "User":
+                existing.display_name = display_name
+            self.session.commit()
+            self.session.refresh(existing)
+            return existing
+
+        user = UserAccount(
+            email=clean_email,
+            display_name=display_name or clean_email.split("@")[0].capitalize(),
+            password_hash=hash_password(password),
+        )
+        self.session.add(user)
+        self.session.commit()
+        self.session.refresh(user)
+        return user
+
+    def authenticate_user(self, email: str, password: str) -> Optional[UserAccount]:
+        """Authenticates user with email and plain password against stored hash."""
+        user = self.get_user(email.lower().strip())
+        if not user or not user.password_hash:
+            return None
+        if verify_password(password, user.password_hash):
+            return user
+        return None
+
     def get_or_create_user(
         self,
         email: str,

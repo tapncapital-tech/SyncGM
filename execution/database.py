@@ -45,6 +45,7 @@ class UserAccount(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid_str)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     display_name: Mapped[Optional[str]] = mapped_column(String(255), default="User", nullable=True)
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     google_refresh_token_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     ms_refresh_token_enc: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     sync_policy: Mapped[str] = mapped_column(String(50), default="last_writer_wins", nullable=False)
@@ -142,3 +143,10 @@ def init_db(engine=None) -> None:
     """Initializes all database tables."""
     eng = engine or GLOBAL_ENGINE
     Base.metadata.create_all(bind=eng)
+    try:
+        from sqlalchemy import text
+        with eng.connect() as conn:
+            conn.execute(text("ALTER TABLE user_accounts ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);"))
+            conn.commit()
+    except Exception:
+        pass

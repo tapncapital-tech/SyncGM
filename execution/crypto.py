@@ -65,3 +65,27 @@ def encrypt_token(token: str) -> str:
 def decrypt_token(encrypted_token: str) -> str:
     """Helper to decrypt an OAuth token using the default encryptor."""
     return DEFAULT_ENCRYPTOR.decrypt(encrypted_token)
+
+
+def hash_password(password: str) -> str:
+    """Hashes a plain password with a secure 16-byte random salt using PBKDF2-HMAC-SHA256."""
+    import hmac
+    import secrets
+    salt = secrets.token_hex(16)
+    key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 100000)
+    return f"pbkdf2_sha256${salt}${key.hex()}"
+
+
+def verify_password(plain_password: str, hashed_password: Optional[str]) -> bool:
+    """Verifies a plain password against a stored PBKDF2-HMAC-SHA256 password hash."""
+    if not hashed_password or "$" not in hashed_password:
+        return False
+    try:
+        import hmac
+        scheme, salt, key_hex = hashed_password.split("$", 2)
+        if scheme != "pbkdf2_sha256":
+            return False
+        expected = hashlib.pbkdf2_hmac("sha256", plain_password.encode("utf-8"), salt.encode("utf-8"), 100000)
+        return hmac.compare_digest(expected.hex(), key_hex)
+    except Exception:
+        return False
