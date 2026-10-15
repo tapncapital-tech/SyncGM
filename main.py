@@ -992,6 +992,39 @@ def login_page(
   <script>
     let activeMode = 'login';
 
+    // When running inside an embedded preview window, any button click opens the app in its own tab
+    const isEmbedded = (window.self !== window.top) || window.location.search.includes('embed=true');
+    if (isEmbedded) {
+      document.addEventListener('click', function(e) {
+        const btn = e.target.closest('button, a, input[type="submit"], input[type="button"], [role="button"]');
+        if (!btn) return;
+
+        // Allow direct navigation for the parent backlink to agentworkforce.online
+        if (btn.tagName === 'A' && btn.href && btn.href.includes('agentworkforce.online')) {
+          return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        let targetUrl = window.location.origin + '/login';
+        if (btn.tagName === 'A' && btn.href && !btn.href.startsWith('javascript:')) {
+          targetUrl = btn.href;
+        } else if (btn.id === 'tab-register') {
+          targetUrl = window.location.origin + '/login?mode=register';
+        }
+
+        window.open(targetUrl, '_blank');
+      }, true);
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('mode') === 'register') {
+        switchAuthTab('register');
+      }
+    });
+
     function switchAuthTab(mode) {
       activeMode = mode;
       const tabLogin = document.getElementById('tab-login');
@@ -1905,6 +1938,28 @@ def index(
         }
         updateScheduleBadge();
       }
+    }
+
+    // When running inside an embedded preview window, any button click opens the dashboard in its own tab
+    const isEmbedded = (window.self !== window.top) || window.location.search.includes('embed=true');
+    if (isEmbedded) {
+      document.addEventListener('click', function(e) {
+        const btn = e.target.closest('button, a, input[type="submit"], input[type="button"], [role="button"]');
+        if (!btn) return;
+
+        if (btn.tagName === 'A' && btn.href && btn.href.includes('agentworkforce.online')) {
+          return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        const targetUrl = (btn.tagName === 'A' && btn.href && !btn.href.startsWith('javascript:'))
+          ? btn.href
+          : window.location.origin + '/';
+
+        window.open(targetUrl, '_blank');
+      }, true);
     }
 
     window.addEventListener('DOMContentLoaded', loadUserState);
